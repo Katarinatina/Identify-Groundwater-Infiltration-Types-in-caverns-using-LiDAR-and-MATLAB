@@ -1,0 +1,465 @@
+lear; home
+clf;
+clc;
+
+tic
+
+crop = LoadGrid('LOWHMK5.SGEMS'); % Site
+qz_crop = -crop;
+
+
+ 
+%% Import Data
+window =30; % Moving average window
+threshold_percentile = 0.97; % Threshold to define the stalactites
+threshold_flow_percentile = 0.94; % Threshold to define the possible flow area
+aspect_ratio_fracture = 8;
+aspect_ratio_matrix = 12;
+eqv_area_solution_pipe = 100;
+eqv_area_matrix = 75;
+eqv_area_fracture = 100;
+length_dia_ratio_soda = 3;
+dia_soda = 1;
+
+
+figure(1); clf;
+qz_crop_fl = imrotate(qz_crop, -90);
+qz_crop_fl = flip(qz_crop_fl,1);
+imagesc(qz_crop_fl);
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+colorbar
+axis equal tight
+
+%% Moving Average to have a smooth surface (ceiling)
+movavg = MovAvg(qz_crop, window);
+fprintf('\nMoving average window = %0.0f sq grid', window*2)
+
+figure(15);clf;
+movavg_fl = imrotate(movavg,-90);
+movavg_fl = flip(movavg_fl,1);
+imagesc(movavg_fl);
+colorbar
+axis equal tight
+title('Moving Average')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+
+%% Ceiling surface minus the moving average gives topography
+topo_initial=movavg-qz_crop;
+
+%% Defining thresholds
+threshold = quantile(topo_initial(:), threshold_percentile);
+threshold_flow = quantile(topo_initial(:), threshold_flow_percentile);
+
+fprintf('Threshold Percentile = %0.2f Percent\n', threshold_percentile*100)
+fprintf('Threshold = %0.4f\n', threshold)
+fprintf('Threshold Percentile to identify Fracture Flow = %0.2f\n', threshold_flow_percentile*100)
+fprintf('Threshold_flow = %0.4f\n', threshold_flow)
+
+anomalies_initial = topo_initial>threshold;
+
+%% Defining the Locations of Stalactites
+L_initial = bwlabel(anomalies_initial, 8); % Indentify the connected components. Each connected component is princible corresponds to one stal
+
+No_of_Stals_initial = max(L_initial(:));
+
+%% Use of regionprops function to find out 'Area', 'EquivDiameter', 'Orientation', 'Centroid'
+STATS_1_initial = regionprops(logical(L_initial), 'EquivDiameter');
+
+EquivDiameter = (cat(1, STATS_1_initial.EquivDiameter));
+Min_dia_exclude = min(cellfun(@(STATS_1_initial)min(STATS_1_initial(:)), {STATS_1_initial.EquivDiameter}));
+index = EquivDiameter > Min_dia_exclude;
+exclude_loc = find((cat(1, STATS_1_initial.EquivDiameter)) == Min_dia_exclude);
+I = zeros(size(exclude_loc));
+J = zeros(size(exclude_loc));
+anomalies = anomalies_initial;
+for i=1:size(exclude_loc)
+    [I(i),J(i)] = find(L_initial == exclude_loc(i));
+    anomalies(I(i),J(i)) = 0;
+end
+
+L = bwlabel(anomalies, 8);
+STATS_1 = regionprops(logical(L), 'Area', 'EquivDiameter', 'Orientation', 'Centroid', 'Image', 'BoundingBox');
+imshow(L)
+% Diameter = (cat(1, STATS_1.EquivDiameter))/2.5; % Stalactites diameters in cm units
+% Area = (cat(1, STATS_1.Area))/2.5/2.5; % Stalactites area in cm units
+Diameter = (cat(1, STATS_1.EquivDiameter))/10; % Stalactites diameters in cm units
+Area = (cat(1, STATS_1.Area))/10/10; % Stalactites area in cm units
+
+topo = topo_initial;
+K = find(EquivDiameter == Min_dia_exclude);
+for i = size(K,1)
+    b = find(L_initial == K(i));
+    topo(b) = 0;
+end
+
+figure(3); clf; hold on
+subplot(1,2,1)
+topo_initial_fl = imrotate(topo_initial, -90);
+topo_initial_fl = flip(topo_initial_fl, 1);
+imagesc(topo_initial_fl);
+colorbar
+colormap default
+axis equal tight
+title('Initial Topography')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+subplot(1,2,2)
+topo_fl = imrotate(topo, -90);
+topo_fl = flip(topo_fl, 1);
+imagesc(topo_fl);
+colorbar
+colormap default
+axis equal tight
+title('Topography')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+
+%% Anomalies image
+figure(4); clf; hold on
+anomalies_rot = imrotate(anomalies, -90);
+anomalies_rot = flip(anomalies_rot, 1);
+imagesc(anomalies_rot);
+axis equal tight
+colorbar
+colormap gray
+title('Anomalies/Location of Stalactites')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+
+%% Stalactites max and min area and diameter
+No_of_Stals = max(L(:));
+
+Density_of_stals = No_of_Stals/size(topo,1)*1000/size(topo,2)*1000;
+fprintf('Total Number of Stalactites = %0.0f\n', No_of_Stals)
+fprintf('Ceiling dimension = %0.2f meter by %0.2f meter\n', size(anomalies, 1)/1000, size(anomalies,2)/1000)
+fprintf('Density of stalactites = %0.0f per sq meter\n', Density_of_stals)
+
+Max_area = max(Area);
+Min_area = min(Area);
+fprintf('\nMaximum area of stalactite = %0.4f cm sq\n', Max_area)
+fprintf('Minimum area of stalactite = %0.4f cm sq\n', Min_area)
+
+Max_dia = max(Diameter);
+Min_dia = min(Diameter);
+fprintf('\nMaximum diameter of stalactite = %0.4f cm sq\n', Max_dia)
+fprintf('Minimum diameter of stalactite = %0.4f cm sq\n', Min_dia)
+
+%% Find out Stalactites lengths
+ind = cell(1, No_of_Stals);
+length_all = cell(1, No_of_Stals);
+length = zeros(No_of_Stals, 1);
+elv_all = cell(1, No_of_Stals);
+elv = zeros(No_of_Stals, 1);
+for i = 1:No_of_Stals
+    ind{i} = find(L==i);
+    length_all{i} = (topo(ind{i}));
+    length(i) = max(length_all{i}); % Stalactites length in m units
+    elv_all{i} = (qz_crop(ind{i}));
+    elv(i) = max(elv_all{i}) - length(i); % Topographic elevations in m units
+end
+length = abs((length - threshold)*100);
+Sum_of_lengths = sum(length);
+Avg_length = Sum_of_lengths/No_of_Stals; % Length in cm units
+fprintf('\nSum of stalactites length = %0.2f meter\n', Sum_of_lengths)
+fprintf('Average length of stalactites = %0.2fcm\n\n', Avg_length)
+length_exclude_min = length;
+elv_exclude_min = elv;
+
+%% Find out the Aspect ratio, flow types
+threshold_flow = quantile(topo_initial(:), threshold_flow_percentile);
+fprintf('threshold_flow = %0.4f\n', threshold_flow)
+anomalies_flow = topo>threshold_flow;
+
+L_flow = bwlabel(anomalies_flow, 8);
+
+STATS_2 = regionprops(logical(L_flow), 'Area', 'EquivDiameter', 'Image', 'BoundingBox');
+Diameter_2 = (cat(1, STATS_2.EquivDiameter))/10; % Stalactites diameters in cm units
+Area_2 = (cat(1, STATS_2.Area))/10/10; % Stalactites area in cm units
+
+% figure(5);clf;hold on
+% subplot(2,2,1)
+% imagesc(anomalies_flow);
+% axis equal tight
+% colormap gray
+% title('Locations of possible flow areas')
+% xlabel('Distance (mm)')
+% ylabel('Distance (mm)')
+
+BoundingBox = cat(1, STATS_1.BoundingBox);
+BoundingBox = BoundingBox(:,3:4);
+AR_1 = zeros(max(L(:)), 1);
+for i = 1:max(L(:))
+    AR_1(i) = BoundingBox(i,2) / BoundingBox(i,1);
+end
+Aspect_Ratio = AR_1/min(AR_1(:)); % Normalize the aspect ratio
+Avg_aspect_Ratio = mean(Aspect_Ratio);
+
+BoundingBox_2 = cat(1, STATS_2.BoundingBox);
+BoundingBox_2 = BoundingBox_2(:,3:4);
+AR_2 = zeros(max(L_flow(:)), 1);
+for i = 1:max(L_flow(:))
+    AR_2(i) = BoundingBox_2(i,2) / BoundingBox_2(i,1);
+end
+Aspect_Ratio_2 = AR_2/min(AR_2(:)); % Normalize the aspect ratio
+Avg_aspect_Ratio_2 = mean(Aspect_Ratio_2);
+
+%% Define Locations of Flow types
+B1 = zeros(size(anomalies_flow));
+K1 = find(Aspect_Ratio_2 > aspect_ratio_fracture & Area_2 > eqv_area_fracture);
+for i = 1:size(K1, 1)
+    b1 = find(L_flow == K1(i));
+    B1(b1) = 1;
+end
+fprintf('Maximum aspect ratio of flow area = %0.1f \n', max(Aspect_Ratio_2))
+fprintf('Minimum aspect ratio of flow area = %0.1f \n', min(Aspect_Ratio_2))
+fprintf('Fracture flow locations are defined by both aspect ratio > %0.0f and Equivalent Area > %0.0f cm\n', ...
+    aspect_ratio_fracture, eqv_area_fracture);
+fprintf('Number of Fracture flow locations = %0.0f \n', size(K1,1))
+
+subplot(2,2,2)
+imagesc(B1)
+axis equal tight
+colormap gray
+title('Locations of Pure Fracture Flow')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+
+B2 = zeros(size(anomalies));
+K2 = find(Aspect_Ratio < aspect_ratio_matrix & Area < eqv_area_matrix);
+for i = 1:size(K2,1)
+    b2 = find(L==K2(i));
+    B2(b2) = 1;
+end
+fprintf('Matrix flow locations are defined by both aspect ratio < %0.0f and Equivalent area < %0.0f cm \n', ...
+    aspect_ratio_matrix, eqv_area_matrix);
+fprintf('Number of Matrix flow locations = %0.0f \n', size(K2,1))
+fprintf('Maximum aspect ratio of stalactite = %0.1f \n', max(Aspect_Ratio))
+fprintf('Minimum aspect ratio of stalactite = %0.1f \n', min(Aspect_Ratio))
+fprintf('Average aspect ratio of stalactite = %0.1f \n', Avg_aspect_Ratio)
+
+subplot(2,2,3)
+B2_rot = imrotate(B2,180);
+B2_rot = flip(B2_rot,1);
+imagesc(B2_rot);
+axis equal tight
+colormap gray
+title('Locations of Matrix flow')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+
+B3 = zeros(size(anomalies_flow));
+K3 = find(Aspect_Ratio_2 < aspect_ratio_fracture & Area_2 > eqv_area_solution_pipe);
+for i = 1:size(K3,1)
+    b3 = find(L_flow==K3(i));
+    B3(b3) = 1;
+end
+fprintf('Combination of Pipe, Fracture and Martix flow locations are defined by both aspect ratio < %0.0f and Equivalent Area > %0.0f cm\n', ...
+    aspect_ratio_fracture, eqv_area_solution_pipe)
+fprintf('Number of Combined flow locations = %0.0f \n', size(K3,1))
+
+subplot(2,2,4)
+imagesc(B3)
+axis equal tight
+colormap gray
+title('Locations of Combination of Pipe, Fracture and Martix flow')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+
+%% Find out Stalactites lengths for flows
+No_of_flow = max(L_flow(:));
+ind_flow = cell(1, No_of_flow);
+length_all_flow = cell(1, No_of_flow);
+length_flow = zeros(No_of_flow, 1);
+elv_all_flow = cell(1, No_of_flow);
+elv_flow = zeros(No_of_flow, 1);
+for i = 1:No_of_flow
+    ind_flow{i} = find(L_flow==i);
+    length_all_flow{i} = (topo(ind_flow{i}));
+    length_flow(i) = max(length_all_flow{i}); % Stalactites length in m units
+    elv_all_flow{i} = (qz_crop(ind_flow{i}));
+    elv_flow(i) = max(elv_all_flow{i}) - length_flow(i); % Topographic elevations in m units
+end
+length_flow = abs((length_flow - threshold_flow)*100);
+
+
+%% Finding soda_straws
+index_soda = Diameter_2 < dia_soda;
+Diameter_soda = Diameter_2(index_soda); 
+length_soda = length_flow(index_soda);
+elv_soda = elv_flow(index_soda);
+length_dia_ratio = length_flow./Diameter_2;
+
+B4 = zeros(size(anomalies_flow));
+K4 = find(length_dia_ratio > length_dia_ratio_soda & Area_2 < dia_soda*pi/4);
+for i=1:size(K4,1)
+    b4 = find(L_flow==K4(i));
+    B4(b4) = 1;
+end
+fprintf('Soda-straws are defined by both length diameter ratio > %0.0f and Diameter < %0.2f cm\n', ...
+    length_dia_ratio_soda, dia_soda)
+fprintf('Number of Soda-straw Stalactites location = %0.0f \n', size(K4,1))
+% figure(6);clf; hold on
+% B4_rot = imrotate(B4,180);
+% B4_rot = flip(B4_rot,1);
+% imagesc(B4_rot);
+% axis equal tight
+% colormap gray
+% title('Locations of Soda-straws')
+% xlabel('Distance (mm)')
+% ylabel('Distance (mm)')
+
+fprintf('Total Number of stalactites = %0.0f\n', No_of_Stals)
+Tot_stals_check = sum(size(K1,1)+size(K2,1)+size(K3,1)+size(K4,1));
+%Density_of_stals = Tot_stals_check/size(topo,1)*250/size(topo,2)*250;
+Density_of_stals = Tot_stals_check/size(topo,1)*1000/size(topo,2)*1000;
+fprintf('Density of stalactites = %0.0f per sq meter\n', Density_of_stals)
+
+Aspect_ratio_plot = Aspect_Ratio_2(K1);
+length_plot = length_flow(K1);
+Aspect_ratio_plot( size(K1,1)+1 : size(K1,1)+size(K3,1)) = Aspect_Ratio_2(K3);
+length_plot( size(K1,1)+1 : size(K1,1)+size(K3,1)) = length_flow(K3);
+Aspect_ratio_plot( size(K1,1)+size(K3,1)+1 : size(K1,1)+size(K3,1)+size(K4,1)) = Aspect_Ratio_2(K4);
+length_plot( size(K1,1)+size(K3,1)+1 : size(K1,1)+size(K3,1)+size(K4,1)) = length_flow(K4);
+
+%% Plotting Stalactites length vs Diameter
+figure(7);clf;hold on
+param_1 = zeros(size(length_exclude_min, 1), 2);
+param_1(:, 1) = log(length_exclude_min);
+param_1(:, 2) = log(Diameter);
+
+[pdf_1,X_1,Y_1] = Ksmooth(param_1,(std(param_1(:,1)))/3,(std(param_1(:,2)))/3,[min(param_1(:,1)) 0.01 max(param_1(:,1))],[min(param_1(:,2)) 0.01 max(param_1(:,2))]);
+pdf_1 = pdf_1/sum(pdf_1(:));
+surf(X_1,Y_1,pdf_1)
+shading flat
+axis equal tight
+colormap default
+colorbar
+title('Plot for Stalactites with Soda-straws')
+xlabel('log length [log(cm)]')
+ylabel('log diameter [log(cm)]')
+
+%% correlation between stalactites diameter and length
+r = (corr(log(length_exclude_min),log(Diameter)));
+fprintf('Correlation (r) between stals diameter and length = %0.2f\n', r)
+
+slope = gradient(param_1);
+slope = abs(slope);
+avg_slope = median(slope(:,1));
+interquartile_range = iqr(slope(:,1));
+
+index_soda = Diameter > dia_soda;
+Diameter_exclude_soda = Diameter(index_soda);
+length_exclude_soda = length_exclude_min(index_soda);
+elv_exclude_soda = elv_exclude_min(index_soda);
+
+figure(8);clf;hold on
+param_1 = zeros(size(length_exclude_soda,1),2);
+param_1(:,1) = log(length_exclude_soda);
+param_1(:,2) = log(Diameter_exclude_soda);
+
+[pdf_1,X_1,Y_1] = Ksmooth(param_1,(std(param_1(:,1)))/3,(std(param_1(:,2)))/3,[min(param_1(:,1)) 0.01 max(param_1(:,1))],[min(param_1(:,2)) 0.01 max(param_1(:,2))]);
+pdf_1 = pdf_1/sum(pdf_1(:));
+surf(X_1,Y_1,pdf_1)
+shading flat
+axis tight
+colormap default
+colorbar
+title('Plot for Stalactites without Soda-straws')
+xlabel('log length [log(cm)]')
+ylabel('log diameter [log(cm)]')
+
+%% correlation between stalactites diameter and length
+r = (corr(log(length_exclude_soda),log(Diameter_exclude_soda)));
+fprintf('Correlation (r) between stals diameter and length = %0.2f\n', r)
+
+slope_exclude_soda = gradient(param_1);
+slope_exclude_soda = abs(slope_exclude_soda);
+avg_slope_exclude_soda = median(slope_exclude_soda(:,1));
+interquartile_range_exclude_soda = iqr(slope_exclude_soda(:,1));
+
+%% Plotting Stalactites length vs topography elevation
+figure(9);clf;hold on
+param_2 = zeros(size(length_exclude_min,1),2);
+param_2(:,1) = length_exclude_min;
+param_2(:,2) = elv_exclude_min;
+[pdf_2,X_2,Y_2] = Ksmooth(param_2,(std(param_2(:,1)))/3,(std(param_2(:,2)))/3,[min(param_2(:,1)) 0.01 max(param_2(:,1))],[min(param_2(:,2)) 0.01 max(param_2(:,2))]);
+pdf_2 = pdf_2/sum(pdf_2(:));
+
+surf(X_2,Y_2,pdf_2)
+shading flat
+colormap default
+axis tight
+colorbar
+title('Stals Length vs Elevation')
+xlabel('Length (cm)')
+ylabel('Elevation (m)')
+
+%% Stalactite length vs. Aspect Ratio
+
+figure(10); clf; hold on
+scatter(length, Aspect_Ratio, 'red', 'filled')
+xlim([0 100])
+ylim([0 40])
+title('site 1')
+xlabel('Stalactite length (cm)')
+ylabel('Aspect Ratio')
+axis tight
+
+%% Combination of flow types on single graph
+
+ind_soda_1 = find(B4==1);
+B1(ind_soda_1) = 4;
+Percent_soda_straw = size(ind_soda_1, 1) / size(B1,1)/ size(B1,2)*100;
+ind = find(B2==1);
+B1(ind) = 2;
+Percent_Flow2 = size(ind,1)/size(B1,1)/size(B1,2)*100; %matrix
+ind = find(B3==1);
+B1(ind) = 3;
+Percent_Flow3 = size(ind,1)/size(B1,1)/size(B1,2)*100; %combination
+ind = find(B1==1);
+Percent_Flow1 = size(ind,1)/size(B1,1)/size(B1,2)*100; %fracture
+Total_flow_area = Percent_soda_straw + Percent_Flow1 + Percent_Flow2 + Percent_Flow3
+Portion_Fracture = Percent_Flow1 / Total_flow_area * 100
+Portion_Matrix = Percent_Flow2 / Total_flow_area * 100
+Portion_Combination = Percent_Flow3 / Total_flow_area * 100
+Portion_Soda = Percent_soda_straw / Total_flow_area * 100
+No_flow_area_of_ceiling = (100 - Total_flow_area)
+
+figure(11); clf; hold on
+B1_rot = imrotate(B1, -90);
+B1_rot = flip(B1_rot,1);
+imagesc(B1_rot);
+[I,J] = find(B1 == 4);
+C = ones(size(I,1),1)*4;
+hold on 
+scatter(size(B1,1)-I, size(B1,2)-J,3,C,'*','r')
+axis equal tight
+cmap = hsv(5);
+cmap(1,:) = [0,0,0];
+colormap(cmap)
+
+hold on
+L = line(ones(5),ones(5), 'LineWidth',2);               % generate line
+set(L,{'color'},mat2cell(cmap,ones(1,5),3));            % set the colors according to cmap
+% legend('Soda straw stals','No flow','Fracture Flow','Matrix Flow','Combination Flow','Location','SouthWest')
+%legend('Soda straw stals','No flow','Fracture Flow','Matrix Flow','Combination Flow')
+
+title('Locations of flow types')
+xlabel('Distance (mm)')
+ylabel('Distance (mm)')
+
+%% Histogram
+figure(4);clf;hold on
+histogram(topo_initial(:), 100) % change the number of bins depending on how it looks
+title('Histogram for Stalactites selection')
+threshold = quantile(topo_initial(:),threshold_percentile);
+xline(threshold,'-r',{'97th percentile Threshold'},'LabelVerticalAlignment','bottom')
+threshold_flow = quantile(topo_initial(:),threshold_flow_percentile);
+xline(threshold_flow,'-b',{'94th percentile Threshold'},'LabelVerticalAlignment','middle')
+xlim([-0.1 0.4]) % Change according to how it looks
+
+beep 
+
+toc
